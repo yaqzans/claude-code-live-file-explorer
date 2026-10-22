@@ -1,4 +1,4 @@
-# Live files for Claude Code
+# Claude Code Live File Explorer
 
 **See every file Claude touches, live, right beside the chat.**
 
@@ -26,12 +26,12 @@ When Claude works on a big task it can touch dozens of files across many folders
 
 ## Install
 
-**In the Claude Code desktop app:** click **+** next to the prompt box, then **Plugins**, **Add marketplace**, enter `yaqzans/live-files`, then **Add plugin**.
+**In the Claude Code desktop app:** click **+** next to the prompt box, then **Plugins**, **Add marketplace**, enter `yaqzans/claude-code-live-file-explorer`, then **Add plugin**.
 
 **Or from a terminal:**
 
 ```bash
-claude plugin install live-files --marketplace yaqzans/live-files
+claude plugin install live-files --marketplace yaqzans/claude-code-live-file-explorer
 ```
 
 New chats load it after install. In a chat that is already open, type `/reload-plugins`.
