@@ -22,6 +22,7 @@ declare module 'claude-code' {
       isMenuOpen: boolean
       collapsed: string[]
       isPaused: boolean
+      historyNote: string
     }
   }
 }

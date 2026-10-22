@@ -54,6 +54,8 @@ const isMenuOpenA = atom({ plugin: 'live-files', key: 'isMenuOpen' } as const, f
 const collapsedA = atom({ plugin: 'live-files', key: 'collapsed' } as const, [] as string[])
 // Pause holds the tree still; this chat only, never saved.
 const isPausedA = atom({ plugin: 'live-files', key: 'isPaused' } as const, false)
+// What reading this chat's history found, shown dim so a miss is never silent.
+const historyNoteA = atom({ plugin: 'live-files', key: 'historyNote' } as const, '')
 
 // Windows' own Explorer-style Open dialog, set up to pick a folder: it prints
 // the chosen folder, or nothing when cancelled. The start folder comes in by
@@ -220,7 +222,7 @@ async function transcriptUses($: EngineInterface): Promise<Array<{ tool: string;
       if (dir.kind === 'dir' && await $.fs.exists(guess)) { file = guess; break }
     }
   }
-  if (!file) throw new Error('no transcript file')
+  if (!file) throw new Error(`no transcript for chat ${id} under ${base}`)
   const isWindows = /^[A-Za-z]:/.test(file)
   const run = isWindows
     ? await $.process.run(
@@ -235,6 +237,7 @@ async function transcriptUses($: EngineInterface): Promise<Array<{ tool: string;
       ['grep', '-oE', '"name":"(Write|Edit|NotebookEdit|Read)","input":\\{"(file_path|notebook_path)":"[^"]*"', file],
       { timeoutMs: 60_000 },
     )
+  if (run.exitCode !== 0) throw new Error(`search failed (${run.exitCode}): ${run.stderr.trim().slice(0, 160)}`)
   const uses: Array<{ tool: string; path: string }> = []
   for (const m of run.stdout.matchAll(USE_RE)) {
     try {
@@ -250,10 +253,12 @@ async function transcriptUses($: EngineInterface): Promise<Array<{ tool: string;
 // path. A first Write with no Read before it made the file.
 async function historyWrites($: EngineInterface): Promise<Record<string, Change>> {
   let uses: Array<{ tool: string; path: string }>
+  let source = 'transcript'
   try {
     uses = await transcriptUses($)
-  } catch {
+  } catch (err) {
     // No transcript file to search: fall back to the messages the engine keeps.
+    source = `messages only (${String(err instanceof Error ? err.message : err).slice(0, 160)})`
     uses = []
     try {
       for (const message of await $.session.messages()) {
@@ -262,7 +267,8 @@ async function historyWrites($: EngineInterface): Promise<Record<string, Change>
           if (typeof path === 'string') uses.push({ tool: use.tool, path })
         }
       }
-    } catch {
+    } catch (err) {
+      await update($, historyNoteA, () => `Couldn't read this chat's history: ${String(err).slice(0, 160)}`)
       return {}
     }
   }
@@ -277,6 +283,11 @@ async function historyWrites($: EngineInterface): Promise<Record<string, Change>
       seen.add(key)
     }
   }
+  const root = (await read($, rootA)).toLowerCase()
+  const here = Object.keys(out).filter(k => k === root || k.startsWith(root + '/')).length
+  await update($, historyNoteA, () =>
+    `Earlier work: this chat wrote ${Object.keys(out).length} file${Object.keys(out).length === 1 ? '' : 's'}, ` +
+    `${here} in this folder (from ${source}).`)
   return out
 }
 
@@ -747,6 +758,7 @@ export const register: Register = on => {
     const isMenuOpen = await read($, isMenuOpenA)
     const collapsed = new Set(await read($, collapsedA))
     const isPaused = await read($, isPausedA)
+    const historyNote = await read($, historyNoteA)
     const now = Date.now()
     const keys = Object.keys(changes).sort()
     const tally = { added: 0, modified: 0, deleted: 0 }
@@ -988,6 +1000,7 @@ export const register: Register = on => {
             ))}
           </Box>
         )}
+        {historyNote && <Text dimColor size="caption">{historyNote}</Text>}
         {isPaused && (
           <Text size="caption" color={TONE.modified.color}>Paused: the tree is frozen. Resume catches up on everything.</Text>
         )}

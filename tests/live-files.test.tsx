@@ -245,6 +245,7 @@ test('writes from before a compaction come back from the transcript file', async
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined() // engine.py, written new
   expect(await ui.find({ type: 'Text', text: /~1/ })).toBeDefined() // notes.md, read then edited
+  expect(await ui.find({ type: 'Text', text: /wrote 2 files, 2 in this folder \(from transcript\)/ })).toBeDefined()
   await ui.unmount()
 })
 
