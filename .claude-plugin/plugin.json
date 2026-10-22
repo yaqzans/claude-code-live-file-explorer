@@ -1,0 +1,11 @@
+{
+  "name": "live-files",
+  "version": "0.2.0",
+  "description": "A live file tree of one project folder you pick, marking what was added, changed or deleted.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "yaqzans"
+  },
+  "homepage": "https://github.com/yaqzans/live-files",
+  "license": "MIT"
+}

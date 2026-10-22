@@ -1,0 +1,13 @@
+{
+  "name": "live-files",
+  "owner": {
+    "name": "yaqzans"
+  },
+  "plugins": [
+    {
+      "name": "live-files",
+      "source": "./"
+    }
+  ],
+  "description": "A live file explorer pane that marks what each chat added, changed or deleted."
+}
