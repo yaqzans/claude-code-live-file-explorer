@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="468" viewBox="0 0 520 468" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">
+  <title>The Live files pane: a project tree where new, changed and deleted files are marked as the chat edits them</title>
+  <rect width="520" height="468" rx="12" fill="#1e1f22"/>
+  <rect x="0.5" y="0.5" width="519" height="467" rx="11.5" fill="none" stroke="#393b40"/>
+  <text x="20" y="30" fill="#9da0a8" font-size="13">Live files</text>
+  <text x="488" y="30" fill="#9da0a8" font-size="14">✕</text>
+  <line x1="0" y1="44" x2="520" y2="44" stroke="#2b2d30"/>
+
+  <text x="20" y="72" fill="#dfe1e5" font-weight="600" font-size="15">my-app</text>
+  <text x="500" y="72" text-anchor="end" font-family="'JetBrains Mono', Consolas, monospace" font-size="12"><tspan fill="#73bd79">+2 </tspan><tspan fill="#70aeff">~3 </tspan><tspan fill="#868a91">-1</tspan></text>
+  <text x="20" y="90" fill="#6f737a" font-size="11">C:/work/my-app</text>
+  <g fill="#9da0a8" font-size="12"><text x="20" y="114">Change folder</text><text x="122" y="114">Changes only</text><text x="220" y="114">Collapse</text><text x="290" y="114">View ▾</text><text x="350" y="114">Pause</text></g>
+  <g font-size="11"><text x="20" y="136" fill="#73bd79">A</text><text x="30" y="136" fill="#6f737a">new</text><text x="62" y="136" fill="#70aeff">M</text><text x="74" y="136" fill="#6f737a">changed</text><text x="126" y="136" fill="#868a91">D</text><text x="136" y="136" fill="#6f737a">deleted</text><text x="186" y="136" fill="#70aeff">●</text><text x="198" y="136" fill="#6f737a">changes inside, blinks while live</text></g>
+
+  <g font-family="'JetBrains Mono', Consolas, monospace" font-size="12">
+    <text x="20" y="170" fill="#8b8f96">▾</text>
+    <text x="54" y="170" fill="#70aeff" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">src</text>
+    <text x="456" y="170" fill="#6f737a" font-size="11">now</text>
+    <circle cx="496" cy="166" r="6" fill="#70aeff" opacity="0.25"/><circle cx="496" cy="166" r="3" fill="#70aeff"/>
+
+    <rect x="27" y="178" width="1.5" height="128" fill="#4e5157"/>
+    <text x="42" y="196" fill="#8b8f96">▾</text>
+    <text x="76" y="196" fill="#70aeff" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">models</text>
+    <text x="496" y="196" text-anchor="middle" fill="#70aeff">●</text>
+    <rect x="49" y="204" width="1.5" height="50" fill="#4e5157"/>
+    <text x="80" y="222" fill="#548af7">py</text><text x="124" y="222" fill="#73bd79" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">attention.py</text>
+    <text x="456" y="222" fill="#6f737a" font-size="11">now</text><text x="484" y="222" fill="#73bd79">A</text>
+    <text x="80" y="248" fill="#548af7">py</text><text x="124" y="248" fill="#70aeff" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">encoder.py</text>
+    <text x="456" y="248" fill="#6f737a" font-size="11">2m</text><text x="484" y="248" fill="#70aeff">M</text>
+
+    <text x="58" y="274" fill="#548af7">py</text><text x="102" y="274" fill="#70aeff" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">train.py</text>
+    <text x="456" y="274" fill="#6f737a" font-size="11">5m</text><text x="484" y="274" fill="#70aeff">M</text>
+    <text x="58" y="300" fill="#548af7">py</text><text x="102" y="300" fill="#868a91" text-decoration="line-through" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">old_loader.py</text>
+    <text x="484" y="300" fill="#868a91">D</text>
+
+    <text x="20" y="330" fill="#8b8f96">▸</text>
+    <text x="54" y="330" fill="#dfe1e5" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">data</text>
+    <text x="20" y="356" fill="#8b8f96">▸</text>
+    <text x="54" y="356" fill="#6f737a" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">.venv</text>
+    <text x="36" y="382" fill="#8a96a3">md</text><text x="80" y="382" fill="#73bd79" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">NOTES.md</text>
+    <text x="456" y="382" fill="#6f737a" font-size="11">1h</text><text x="484" y="382" fill="#73bd79">A</text>
+    <text x="36" y="408" fill="#8a96a3">md</text><text x="80" y="408" fill="#70aeff" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">README.md</text>
+    <text x="456" y="408" fill="#6f737a" font-size="11">1h</text><text x="484" y="408" fill="#70aeff">M</text>
+    <text x="36" y="434" fill="#e08855">toml</text><text x="80" y="434" fill="#dfe1e5" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="14">pyproject.toml</text>
+    <text x="456" y="434" fill="#6f737a" font-size="11">3d</text>
+  </g>
+  <text x="20" y="456" fill="#6f737a" font-size="11">Earlier work: this chat wrote 6 files, 6 in this folder (from transcript).</text>
+</svg>

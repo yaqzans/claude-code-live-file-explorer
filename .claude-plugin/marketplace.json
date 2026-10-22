@@ -9,5 +9,5 @@
       "source": "./"
     }
   ],
-  "description": "A live file explorer pane that marks what each chat added, changed or deleted."
+  "description": "Live files for Claude Code: a file explorer pane that marks every file Claude adds, edits or deletes."
 }
