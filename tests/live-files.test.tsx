@@ -193,19 +193,38 @@ test('only files this chat wrote are marked, read from its history', async ($, o
   await ui.unmount()
 })
 
-test('a new chat watches the most recent folder by itself', async ($, on) => {
+test('each chat reopens on its own folder, not the most recent one', async ($, on) => {
   mock.clock(on)
-  mock.store(on, { recent: ['C:/work/proj'] })
+  // Chat A last watched proj; another chat watched other since, so other is most recent.
+  mock.store(on, { recent: ['C:/work/other', 'C:/work/proj'], rootByChat: { 'chat-a': 'C:/work/proj' } })
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('fs.list', () => ({ value: [file('a.py')] }))
+  on('session.id', () => ({ value: 'chat-a' }))
+  on('fs.list', (_, e) => ({ value: e.path.replace(/\\/g, '/').endsWith('proj') ? [file('a.py')] : [] }))
   on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }))
 
   await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /Which folder/ })).toBeUndefined() // no picker
-  expect(await ui.find({ key: 'file:a.py' })).toBeDefined() // the recent folder's tree
+  expect(await ui.find({ key: 'file:a.py' })).toBeDefined() // chat A's own folder, not the most recent
+  await ui.unmount()
+})
+
+test('a brand-new chat starts on the picker with Recent listed', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { recent: ['C:/work/proj'], rootByChat: { 'some-other-chat': 'C:/work/proj' } })
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'brand-new' }))
+  on('fs.list', () => ({ value: [] }))
+  on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }))
+
+  await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Which folder/ })).toBeDefined()
+  expect(await ui.find({ key: 'recent:C:/work/proj' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -251,7 +270,8 @@ test('writes from before a compaction come back from the transcript file', async
 
 test('the View menu hides parts of the tree', async ($, on) => {
   mock.clock(on)
-  mock.store(on, { recent: ['C:/work/proj'] })
+  mock.store(on, { recent: ['C:/work/proj'], rootByChat: { 'this-chat': 'C:/work/proj' } })
+  on('session.id', () => ({ value: 'this-chat' }))
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -275,7 +295,8 @@ test('dotfiles hide, recent changes sort first, pause freezes and resume catches
     'C:/work/proj': [file('.gitignore'), file('a_old.py', 1), file('z_new.py', 5)],
   }
   const clock = mock.clock(on)
-  mock.store(on, { recent: ['C:/work/proj'] })
+  mock.store(on, { recent: ['C:/work/proj'], rootByChat: { 'this-chat': 'C:/work/proj' } })
+  on('session.id', () => ({ value: 'this-chat' }))
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))

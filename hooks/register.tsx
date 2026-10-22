@@ -341,6 +341,12 @@ async function pickRoot($: EngineInterface, path: string) {
     'recent',
     [root, ...recent.filter(r => r.toLowerCase() !== root.toLowerCase())].slice(0, 6),
   )
+  const id = await $.session.id().catch(() => '')
+  if (id) {
+    const byChat = ((await $.store.get('rootByChat')) as Record<string, string> | undefined) ?? {}
+    delete byChat[id] // re-added last, so the oldest chats drop off first
+    await $.store.set('rootByChat', Object.fromEntries([...Object.entries(byChat), [id, root]].slice(-300)))
+  }
   await scan($)
   startTimer($)
 }
@@ -532,9 +538,11 @@ export const register: Register = on => {
       void scan($)
       startTimer($)
     } else {
-      // No folder yet in this chat: watch the most recent one; Change folder still picks another.
-      const recent = ((await $.store.get('recent')) as string[] | undefined) ?? []
-      if (recent[0]) void pickRoot($, recent[0])
+      // Each chat keeps its own folder: reopen the one this chat watched last.
+      // A chat that never picked one gets the picker, with Recent one click away.
+      const id = await $.session.id().catch(() => '')
+      const byChat = ((await $.store.get('rootByChat')) as Record<string, string> | undefined) ?? {}
+      if (id && byChat[id]) void pickRoot($, byChat[id])
     }
     void openPane($)
 

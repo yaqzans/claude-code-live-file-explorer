@@ -39,7 +39,7 @@ New chats load it after install. In a chat that is already open, type `/reload-p
 ## Use
 
 1. Start a chat. The **Live files** pane opens beside it.
-2. The first time, pick the folder to watch: type a path, click through the folder list, or use **Browse with File Explorer...** on Windows. After that, new chats open on your most recent folder; **Change folder** picks another.
+2. The first time, pick the folder to watch: type a path, click through the folder list, or use **Browse with File Explorer...** on Windows. Each chat remembers its own folder and reopens on it; a new chat shows the picker with your Recent folders one click away. **Change folder** picks another.
 3. Work with Claude as usual and watch the marks appear.
 
 Closed the pane? Click **Open Live files** above the prompt, or type `/files`. `/files <folder>` opens it straight on a folder.
