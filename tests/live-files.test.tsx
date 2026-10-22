@@ -331,3 +331,22 @@ test('dotfiles hide, recent changes sort first, pause freezes and resume catches
   expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('a narrow pane keeps every toolbar link, with short labels', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { rootByChat: { narrow: 'C:/work/proj' } })
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'narrow' }))
+  on('fs.list', () => ({ value: [file('a.py')] }))
+  on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }))
+
+  await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 }, surface: 'desktop' })
+  for (const key of ['pick', 'only', 'collapse', 'pause', 'view']) {
+    expect(await ui.find({ key })).toBeDefined()
+  }
+  expect(await ui.find({ type: 'Text', text: /^Folder$/ })).toBeDefined()
+  await ui.unmount()
+})

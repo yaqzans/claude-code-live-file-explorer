@@ -955,6 +955,7 @@ export const register: Register = on => {
       walk('', 0)
     }
 
+    const isNarrow = (e.props.bodyColumns ?? 80) < 48
     const link = (key: string, label: string, onPress: () => void) => (
       <Button key={key} plain onPress={onPress}><Text dimColor size="footnote">{label}</Text></Button>
     )
@@ -972,9 +973,10 @@ export const register: Register = on => {
           </Box>
           <Text dimColor size="caption" wrap="truncate-start">{root}</Text>
         </Box>
-        <Box flexDirection="row" gap={2}>
-          {link('pick', 'Change folder', () => { void leaveRoot($) })}
-          {link('only', changedOnly ? 'All files' : 'Changes only', () => { void update($, changedOnlyA, v => !v) })}
+        {/* Wraps onto more lines as the pane narrows; very narrow, the labels shorten too. */}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          {link('pick', isNarrow ? 'Folder' : 'Change folder', () => { void leaveRoot($) })}
+          {link('only', changedOnly ? (isNarrow ? 'All' : 'All files') : (isNarrow ? 'Changed' : 'Changes only'), () => { void update($, changedOnlyA, v => !v) })}
           {link('collapse', 'Collapse', () => {
             void update($, expandedA, () => [])
             void update($, collapsedA, () => [...perDir.keys()])
