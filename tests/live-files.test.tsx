@@ -140,7 +140,7 @@ test('work done before the folder was picked still shows as changed', async ($, 
   const disk: Record<string, Entry[]> = {
     'C:/work/proj': [file('old.py'), file('new.md')],
   }
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.store(on)
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -156,6 +156,7 @@ test('work done before the folder was picked still shows as changed', async ($, 
   await $.tool.call({ tool: 'Edit', file_path: 'C:/work/proj/old.py', old_string: 'a', new_string: 'b' })
   await $.tool.call({ tool: 'Write', file_path: 'C:/work/proj/new.md', content: '# hi' })
   await $.command.run({ command: 'files', args: 'proj' })
+  await clock.advance(0) // the history is read in the background
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined()
@@ -170,7 +171,7 @@ test('only files this chat wrote are marked, read from its history', async ($, o
   const disk: Record<string, Entry[]> = {
     'C:/work/proj': [file('mine.py', Date.now()), file('someone_else.pdf', Date.now())],
   }
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.store(on)
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -186,6 +187,7 @@ test('only files this chat wrote are marked, read from its history', async ($, o
 
   await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'files', args: 'proj' })
+  await clock.advance(0) // the history is read in the background
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /~1/ })).toBeDefined() // mine.py only
@@ -234,7 +236,7 @@ test('writes from before a compaction come back from the transcript file', async
     'C:/work/proj/work': [file('engine.py'), file('notes.md')],
   }
   const transcript = 'C:/Users/you/.claude/projects/C--work/s1.jsonl'
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.store(on)
   mock.env(on, { USERPROFILE: 'C:/Users/you' })
   on('command.register', () => ({ value: { command: 'files' } }))
@@ -260,6 +262,7 @@ test('writes from before a compaction come back from the transcript file', async
 
   await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'files', args: 'proj' })
+  await clock.advance(0) // the history is read in the background
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined() // engine.py, written new
@@ -348,5 +351,36 @@ test('a narrow pane keeps every toolbar link, with short labels', async ($, on) 
     expect(await ui.find({ key })).toBeDefined()
   }
   expect(await ui.find({ type: 'Text', text: /^Folder$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a slow history read never holds up the tree', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const clock = mock.clock(on)
+  mock.store(on)
+  mock.env(on, { USERPROFILE: 'C:/Users/you' })
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 's1' }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.list', (_, e) => ({ value: e.path.replace(/\\/g, '/').endsWith('proj') ? [file('a.py')] : [] }))
+  on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }))
+  on('process.run', async () => {
+    await gate // the transcript search is still running
+    return { value: { exitCode: 0, stderr: '', stdout: '"name":"Write","input":{"file_path":"C:\\\\work\\\\proj\\\\a.py"' } }
+  })
+
+  await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
+  void $.command.run({ command: 'files', args: 'proj' })
+  await clock.advance(0)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ key: 'file:a.py' })).toBeDefined() // the tree is already there
+  expect(await ui.find({ type: 'Text', text: /Reading this chat's history/ })).toBeDefined()
+
+  release()
+  await clock.advance(0)
+  expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined() // the mark arrives after
   await ui.unmount()
 })

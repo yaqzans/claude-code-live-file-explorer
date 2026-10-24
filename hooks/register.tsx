@@ -173,13 +173,9 @@ async function scan($: EngineInterface): Promise<void> {
       }
     }
     if (!old) {
-      const touched = { ...(await historyWrites($)), ...(await read($, touchedA)) }
-      const seeded: Record<string, Change> = {}
-      for (const [rel, mtime] of files) {
-        const mark = touched[join(root, rel).toLowerCase()]
-        if (mark && mark.kind !== 'deleted') seeded[rel] = { kind: mark.kind, at: mtime }
-      }
-      if (Object.keys(seeded).length > 0) await update($, changesA, prev => ({ ...seeded, ...prev }))
+      // Draw the tree now; the chat's history is read behind it and adds its marks after.
+      await update($, versionA, v => v + 1)
+      void seedFromHistory($, root, files)
     }
     if (found.length > 0) {
       const at = Date.now()
@@ -289,6 +285,30 @@ async function historyWrites($: EngineInterface): Promise<Record<string, Change>
     `Earlier work: this chat wrote ${Object.keys(out).length} file${Object.keys(out).length === 1 ? '' : 's'}, ` +
     `${here} in this folder (from ${source}).`)
   return out
+}
+
+// Marks what this chat wrote before the folder was watched. Never holds up the
+// tree, and gives up after HISTORY_MS so a slow or stuck read cannot hang the pane.
+const HISTORY_MS = 30_000
+async function seedFromHistory($: EngineInterface, root: string, files: Map<string, number>) {
+  await update($, historyNoteA, () => "Reading this chat's history...")
+  let timer: { cancel: () => void } | undefined
+  const late = new Promise<undefined>(resolve => { timer = $.clock.after(HISTORY_MS, () => resolve(undefined)) })
+  const found = await Promise.race([historyWrites($).catch(() => ({} as Record<string, Change>)), late])
+  timer?.cancel()
+  if (root !== (await read($, rootA))) return // the folder changed meanwhile
+  if (!found) {
+    await update($, historyNoteA, () => "Reading this chat's history took too long; new changes are still marked.")
+    return
+  }
+  const touched = { ...found, ...(await read($, touchedA)) }
+  const seeded: Record<string, Change> = {}
+  for (const [rel, mtime] of files) {
+    const mark = touched[join(root, rel).toLowerCase()]
+    if (mark && mark.kind !== 'deleted') seeded[rel] = { kind: mark.kind, at: mtime }
+  }
+  if (Object.keys(seeded).length > 0) await update($, changesA, prev => ({ ...seeded, ...prev }))
+  await update($, versionA, v => v + 1)
 }
 
 // Blinks the dots of fresh changes for PULSE_MS, then settles them.
@@ -891,7 +911,11 @@ export const register: Register = on => {
     const walk = (dir: string, depth: number) => {
       const entries = listings.get(dir)
       if (!entries) {
-        push(<Text key={`n:${dir}`} dimColor size="caption">Not scanned: too many files</Text>)
+        push(
+          <Text key={`n:${dir}`} dimColor size="caption">
+            {dir === '' ? 'Reading the folder...' : 'Not scanned: too many files'}
+          </Text>,
+        )
         return
       }
       for (const en of sorted(dir, [...entries])) {
