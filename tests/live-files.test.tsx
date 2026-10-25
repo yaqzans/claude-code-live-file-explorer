@@ -191,7 +191,6 @@ test('only files this chat wrote are marked, read from its history', async ($, o
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /~1/ })).toBeDefined() // mine.py only
-  expect(await ui.find({ type: 'Text', text: /Modified: this file changed/ })).toBeDefined() // hover card
   await ui.unmount()
 })
 
@@ -396,5 +395,37 @@ test('an error while drawing shows on the pane instead of a blank pane', async (
   await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /hit an error while drawing/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a huge set of changes is summarised, never sent as one giant drawing', async ($, on) => {
+  // 30 folders of 100 files each, every file written by this chat.
+  const disk: Record<string, Entry[]> = { 'C:/work/huge': [] }
+  const writes: string[] = []
+  for (let d = 0; d < 30; d++) {
+    disk['C:/work/huge']!.push(dir(`pkg${d}`))
+    disk[`C:/work/huge/pkg${d}`] = []
+    for (let f = 0; f < 100; f++) {
+      disk[`C:/work/huge/pkg${d}`]!.push(file(`module_${f}.py`))
+      writes.push(`"name":"Write","input":{"file_path":"C:\\\\work\\\\huge\\\\pkg${d}\\\\module_${f}.py"`)
+    }
+  }
+  const clock = mock.clock(on)
+  mock.store(on, { rootByChat: { huge: 'C:/work/huge' } })
+  mock.env(on, { USERPROFILE: 'C:/Users/you' })
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'huge' }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.list', (_, e) => ({ value: disk[e.path.replace(/\\/g, '/')] ?? [] }))
+  on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }))
+  on('process.run', () => ({ value: { exitCode: 0, stderr: '', stdout: writes.join('\r\n') } }))
+
+  await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
+  await clock.advance(0)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /\+3000/ })).toBeDefined() // every file is still counted
+  expect(await ui.find({ type: 'Text', text: /more rows/ })).toBeDefined() // the rest is summarised
   await ui.unmount()
 })

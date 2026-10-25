@@ -7,7 +7,10 @@ const PANE = 'live-files'
 const TITLE = 'Live files'
 const SCAN_MS = 2500
 const MAX_ENTRIES = 20000
-const MAX_ROWS = 600
+const MAX_ROWS = 250
+// The app drops a pane whose drawing is too big (a 217k-character tree unplaced it),
+// so rows stop at this many characters and the rest are summarised.
+const ROW_BUDGET = 60_000
 const MAX_PREVIEW_LINES = 3000
 const MAX_PREVIEW_BYTES = 1024 * 1024
 
@@ -877,9 +880,11 @@ export const register: Register = on => {
       const rows: RenderElement[] = []
       let target = rows // where push puts a row: the top list, or an open folder's
       let drawn = 0
+      let rowChars = 0
       let hidden = 0
       const push = (one: RenderElement) => {
-        if (drawn < MAX_ROWS) { target.push(one); drawn++ }
+        const size = JSON.stringify(one).length
+        if (drawn < MAX_ROWS && rowChars + size <= ROW_BUDGET) { target.push(one); drawn++; rowChars += size }
         else hidden++
       }
       const isDesktop = e.surface === 'desktop'
@@ -912,26 +917,12 @@ export const register: Register = on => {
               <Box flexShrink={0}><Text dimColor size="caption" mono>{opts.meta}  </Text></Box>
             )}
             {opts.tip && (
-              // The keyed Box is the hover scope; the card inside it shows while
-              // the pointer is on the mark (the docs' own reveal pattern).
               <Box key={`mark:${opts.key}`} flexShrink={0} flexDirection="row">
                 {opts.count !== undefined && <Text dimColor size="caption">{opts.count} </Text>}
                 {opts.letter && <Text color={opts.color} size="caption" mono>{opts.letter}</Text>}
                 {opts.dot && (
                   <Text color={opts.dot.color} dimColor={opts.dot.isPulsing && blink}> ●</Text>
                 )}
-                <Box
-                  position="absolute"
-                  top={-1}
-                  right={2}
-                  width={opts.tip.length + 2}
-                  display="none"
-                  hover={{ display: 'flex' }}
-                  backgroundColor="inverseText"
-                  paddingX={1}
-                >
-                  <Text size="caption" wrap="truncate-end">{opts.tip}</Text>
-                </Box>
               </Box>
             )}
           </Box>,
