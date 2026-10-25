@@ -290,6 +290,7 @@ async function historyWrites($: EngineInterface): Promise<Record<string, Change>
 // Marks what this chat wrote before the folder was watched. Never holds up the
 // tree, and gives up after HISTORY_MS so a slow or stuck read cannot hang the pane.
 const HISTORY_MS = 30_000
+const DRAW_MS = 3000
 async function seedFromHistory($: EngineInterface, root: string, files: Map<string, number>) {
   await update($, historyNoteA, () => "Reading this chat's history...")
   let timer: { cancel: () => void } | undefined
@@ -635,421 +636,441 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e)) // never block a tool over this pane
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const ui = $.ui.resolve(e)
-    const { Box, Text, Button, Code } = ui
-    const Input = 'Input' in ui ? ui.Input : undefined
-    const root = await read($, rootA)
-    const notice = await read($, noticeA)
+    // Never leave the pane blank: a draw that throws shows its error, and one that
+    // runs past DRAW_MS shows a holding line until the next redraw.
+    const draw = async (): Promise<RenderElement> => {
+      const ui = $.ui.resolve(e)
+      const { Box, Text, Button, Code } = ui
+      const Input = 'Input' in ui ? ui.Input : undefined
+      const root = await read($, rootA)
+      const notice = await read($, noticeA)
 
-    // Picker: nothing is scanned until a folder is chosen.
-    if (!root) {
-      const cwd = await read($, cwdA)
-      const browse = (await read($, browseA)) || cwd
-      const subdirs = (await $.fs.list(browse).catch(() => [] as FsEntry[]))
-        .filter(en => en.kind === 'dir' && !IGNORE.has(en.name))
-        .sort(byName)
-      const recent = ((await $.store.get('recent')) as string[] | undefined) ?? []
-      const up = parentDir(browse)
-      const isPicking = await read($, isPickingA)
-      const isWindows = /^[A-Za-z]:/.test(cwd)
+      // Picker: nothing is scanned until a folder is chosen.
+      if (!root) {
+        const cwd = await read($, cwdA)
+        const browse = (await read($, browseA)) || cwd
+        const subdirs = (await $.fs.list(browse).catch(() => [] as FsEntry[]))
+          .filter(en => en.kind === 'dir' && !IGNORE.has(en.name))
+          .sort(byName)
+        const recent = ((await $.store.get('recent')) as string[] | undefined) ?? []
+        const up = parentDir(browse)
+        const isPicking = await read($, isPickingA)
+        const isWindows = /^[A-Za-z]:/.test(cwd)
+
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Which folder should I watch?</Text>
+            <Text dimColor>Nothing is scanned until you pick one.</Text>
+            {notice && <Text color="error">{notice}</Text>}
+            {Input && (
+              <Input
+                key="path"
+                label="Folder path"
+                placeholder="Full path, or a folder name inside this chat's folder"
+                submitLabel="Watch"
+                onSubmit={value => {
+                  void pickRoot($, value)
+                }}
+              />
+            )}
+            {isWindows && (
+              <Box flexDirection="column">
+                <Button
+                  key="explorer"
+                  variant="primary"
+                  onPress={() => { void pickWithExplorer($, browse) }}
+                >
+                  {isPicking ? 'Picker is open...' : 'Browse with File Explorer...'}
+                </Button>
+                {isPicking && (
+                  <Text dimColor>If you can't see it, it may be behind this window (check the taskbar).</Text>
+                )}
+              </Box>
+            )}
+            {recent.length > 0 && (
+              <Box flexDirection="column">
+                <Text bold>Recent</Text>
+                {recent.map(r => (
+                  <Button key={`recent:${r}`} plain onPress={() => { void pickRoot($, r) }}>
+                    {baseName(r)} <Text dimColor>{r}</Text>
+                  </Button>
+                ))}
+              </Box>
+            )}
+            <Box flexDirection="column">
+              <Text bold>Browse</Text>
+              <Text dimColor>{browse}</Text>
+              <Box flexDirection="row" gap={1}>
+                <Button key="use" onPress={() => { void pickRoot($, browse) }}>
+                  Watch this folder
+                </Button>
+                {up !== browse && (
+                  <Button key="up" onPress={() => { void update($, browseA, () => up) }}>
+                    Up one level
+                  </Button>
+                )}
+              </Box>
+              {subdirs.slice(0, 300).map(en => (
+                <Button
+                  key={`browse:${en.name}`}
+                  plain
+                  onPress={() => { void update($, browseA, () => join(browse, en.name)) }}
+                >
+                  {'▸ '}{en.name}
+                </Button>
+              ))}
+              {subdirs.length === 0 && <Text dimColor>No folders in here.</Text>}
+            </Box>
+          </Box>
+        )
+      }
+
+      await read($, versionA) // redraw on every scan that found something
+      const changes = await read($, changesA)
+      const selected = await read($, selectedA)
+
+      // Preview of one file.
+      if (selected) {
+        const change = changes[selected]
+        const showFull = await read($, showFullA)
+        const abs = join(root, selected)
+        const st = await $.fs.stat(abs).catch(() => undefined)
+        let current: string | undefined
+        let problem = ''
+        if (!st) problem = 'This file no longer exists.'
+        else if (st.size > MAX_PREVIEW_BYTES) problem = `Too big to preview (${Math.round(st.size / 1024)} KB).`
+        else {
+          current = await $.fs.read(abs).catch(() => undefined)
+          if (current === undefined) problem = 'Could not read this file.'
+          else if (current.includes('\u0000')) { problem = 'Binary file, no preview.'; current = undefined }
+        }
+        const original = before.get(selected)
+        const diff = before.has(selected) && current !== undefined && !showFull
+          ? unifiedDiff(original ?? '', current)
+          : ''
+        const lines = current?.split(/\r?\n/) ?? []
+
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="row" gap={1}>
+              <Button key="back" onPress={() => { void update($, selectedA, () => '') }}>
+                Back
+              </Button>
+              {before.has(selected) && current !== undefined && (
+                <Button key="mode" onPress={() => { void update($, showFullA, v => !v) }}>
+                  {showFull ? 'Show changes' : 'Show whole file'}
+                </Button>
+              )}
+            </Box>
+            <Text bold>
+              {selected}
+              {change && <Text color={TONE[change.kind].color}> {change.kind}</Text>}
+            </Text>
+            {problem && <Text dimColor>{problem}</Text>}
+            {diff && <Text dimColor>What Claude changed in this chat:</Text>}
+            {diff && <Code source={diff} format="diff" path={selected} />}
+            {!diff && current !== undefined && (
+              <Code
+                source={lines.slice(0, MAX_PREVIEW_LINES).join('\n')}
+                path={selected}
+                startLine={1}
+              />
+            )}
+            {!diff && lines.length > MAX_PREVIEW_LINES && (
+              <Text dimColor>Showing the first {MAX_PREVIEW_LINES} of {lines.length} lines.</Text>
+            )}
+          </Box>
+        )
+      }
+
+      const changedOnly = await read($, changedOnlyA)
+      const expanded = new Set(await read($, expandedA))
+      const blink = await read($, blinkA)
+      const view = await read($, viewA)
+      const isMenuOpen = await read($, isMenuOpenA)
+      const collapsed = new Set(await read($, collapsedA))
+      const isPaused = await read($, isPausedA)
+      const historyNote = await read($, historyNoteA)
+      const now = Date.now()
+      const keys = Object.keys(changes).sort()
+      const tally = { added: 0, modified: 0, deleted: 0 }
+      const perDir = new Map<string, { n: number; at: number }>()
+      for (const rel of keys) {
+        const change = changes[rel]!
+        tally[change.kind]++
+        for (let d = parentOf(rel); ; d = parentOf(d)) {
+          const was = perDir.get(d)
+          perDir.set(d, { n: (was?.n ?? 0) + 1, at: Math.max(was?.at ?? 0, change.at) })
+          if (d === '') break
+        }
+      }
+      const isFresh = (at: number) => now - at < PULSE_MS
+      const isOpenDir = (rel: string) =>
+        expanded.has(rel) || (view.autoOpen && perDir.has(rel) && !collapsed.has(rel))
+      const toggle = (rel: string) => {
+        if (isOpenDir(rel)) {
+          void update($, expandedA, list => list.filter(x => x !== rel))
+          void update($, collapsedA, list => (list.includes(rel) ? list : [...list, rel]))
+        } else {
+          void update($, collapsedA, list => list.filter(x => x !== rel))
+          void update($, expandedA, list => [...list, rel])
+        }
+      }
+      // Folders first; with "Recent changes first", the most recently touched lead
+      // within each kind, else names in order.
+      const lastTouched = (dir: string, en: FsEntry) => {
+        const rel = dir ? `${dir}/${en.name}` : en.name
+        return en.kind === 'dir'
+          ? perDir.get(rel)?.at ?? 0
+          : Math.max(en.mtimeMs, changes[rel]?.at ?? 0)
+      }
+      const sorted = (dir: string, entries: FsEntry[]) => {
+        const list = entries.filter(en => view.dotfiles || !en.name.startsWith('.'))
+        if (!view.recentFirst) return list.sort(byName)
+        return list.sort((a, b) =>
+          (a.kind === 'dir' ? 0 : 1) - (b.kind === 'dir' ? 0 : 1) ||
+          lastTouched(dir, b) - lastTouched(dir, a) || byName(a, b))
+      }
+
+      const rows: RenderElement[] = []
+      let target = rows // where push puts a row: the top list, or an open folder's
+      let drawn = 0
+      let hidden = 0
+      const push = (one: RenderElement) => {
+        if (drawn < MAX_ROWS) { target.push(one); drawn++ }
+        else hidden++
+      }
+      const isDesktop = e.surface === 'desktop'
+      // A row: chevron, type tag, the name, then the change mark; nesting indents it.
+      const row = (opts: {
+        key: string; depth: number; kind: 'dir' | 'file'; name: string; label: string
+        isOpen?: boolean; isMuted?: boolean; color?: string; isStruck?: boolean
+        letter?: string; dot?: { color: string; isPulsing: boolean }; count?: number
+        onPress?: () => void; tip?: string; meta?: string
+      }) => {
+        const name = (
+          <Text color={opts.color} dimColor={opts.isMuted} strikethrough={opts.isStruck} wrap="truncate-end">
+            {opts.label}
+          </Text>
+        )
+        push(
+          <Box key={`row:${opts.key}`} flexDirection="row" alignItems="center">
+            <Box flexShrink={0} flexDirection="row">
+              <Text mono color={CHEVRON}>{opts.kind === 'dir' ? (opts.isOpen ? '▾ ' : '▸ ') : '  '}</Text>
+              <Text mono size="caption" color={toneOf(opts.name)} dimColor={opts.isMuted}>
+                {opts.kind === 'file' && view.tags ? extTag(opts.name) : ''}
+              </Text>
+            </Box>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              {opts.onPress
+                ? <Button key={opts.key} plain onPress={opts.onPress}>{name}</Button>
+                : name}
+            </Box>
+            {opts.meta && (
+              <Box flexShrink={0}><Text dimColor size="caption" mono>{opts.meta}  </Text></Box>
+            )}
+            {opts.tip && (
+              // The keyed Box is the hover scope; the card inside it shows while
+              // the pointer is on the mark (the docs' own reveal pattern).
+              <Box key={`mark:${opts.key}`} flexShrink={0} flexDirection="row">
+                {opts.count !== undefined && <Text dimColor size="caption">{opts.count} </Text>}
+                {opts.letter && <Text color={opts.color} size="caption" mono>{opts.letter}</Text>}
+                {opts.dot && (
+                  <Text color={opts.dot.color} dimColor={opts.dot.isPulsing && blink}> ●</Text>
+                )}
+                <Box
+                  position="absolute"
+                  top={-1}
+                  right={2}
+                  width={opts.tip.length + 2}
+                  display="none"
+                  hover={{ display: 'flex' }}
+                  backgroundColor="inverseText"
+                  paddingX={1}
+                >
+                  <Text size="caption" wrap="truncate-end">{opts.tip}</Text>
+                </Box>
+              </Box>
+            )}
+          </Box>,
+        )
+      }
+      const fileRow = (rel: string, label: string, depth: number, entry?: FsEntry) => {
+        const change = changes[rel]
+        const tone = change ? TONE[change.kind] : undefined
+        row({
+          meta: entry && (view.size || view.age)
+            ? [view.size ? sizeOf(entry.size).padStart(7) : '', view.age ? ageOf(entry.mtimeMs, now).padStart(6) : '']
+              .filter(Boolean).join('  ')
+            : undefined,
+          key: `file:${rel}`, depth, kind: 'file', name: baseName(rel), label,
+          color: tone?.color, isStruck: change?.kind === 'deleted', letter: tone?.letter,
+          dot: change && tone && isFresh(change.at) ? { color: tone.color, isPulsing: true } : undefined,
+          tip: change
+            ? `${TIP[change.kind]}${isFresh(change.at) ? ', just now' : ''}`
+            : undefined,
+          onPress: change?.kind === 'deleted' ? undefined : () => { void openInViewer($, root, rel) },
+        })
+      }
+      const walk = (dir: string, depth: number) => {
+        const entries = listings.get(dir)
+        if (!entries) {
+          push(
+            <Text key={`n:${dir}`} dimColor size="caption">
+              {dir === '' ? 'Reading the folder...' : 'Not scanned: too many files'}
+            </Text>,
+          )
+          return
+        }
+        for (const en of sorted(dir, [...entries])) {
+          const rel = dir ? `${dir}/${en.name}` : en.name
+          if (en.kind === 'dir') {
+            if (IGNORE.has(en.name)) {
+              if (!view.ignored) continue
+              row({ key: `skip:${rel}`, depth, kind: 'dir', name: en.name, label: en.name, isMuted: true })
+              continue
+            }
+            const isOpen = isOpenDir(rel)
+            const inside = perDir.get(rel)
+            row({
+              key: `dir:${rel}`, depth, kind: 'dir', name: en.name, label: en.name, isOpen,
+              meta: view.size && listings.has(rel)
+                ? `${listings.get(rel)!.length} items`.padStart(view.age ? 15 : 7)
+                : undefined,
+              color: inside ? TONE.modified.color : undefined, // JetBrains tints a changed folder's name
+              count: inside && !isOpen ? inside.n : undefined,
+              dot: inside ? { color: TONE.modified.color, isPulsing: isFresh(inside.at) } : undefined,
+              tip: inside
+                ? `${inside.n} changed file${inside.n === 1 ? '' : 's'} inside${isFresh(inside.at) ? ', work happening now' : ''}`
+                : undefined,
+              onPress: () => toggle(rel),
+            })
+            if (isOpen) {
+              // The folder's contents beside one guide line: a zero-width box's
+              // border, so the line runs unbroken down every row inside.
+              const kids: RenderElement[] = []
+              const outer = target
+              target = kids
+              walk(rel, depth + 1)
+              target = outer
+              target.push(
+                <Box key={`kids:${rel}`} flexDirection="row">
+                  {isDesktop && view.guides
+                    ? (
+                      // A hairline bar (0.15 of a cell, about 1px) as tall as the folder: a border
+                      // on a zero-width box drew as a rounded pill instead.
+                      <Box width={0.15} flexShrink={0} marginLeft={1} marginRight={1} backgroundColor="#4e5157" />
+                    )
+                    : <Text mono>{'  '}</Text>}
+                  <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>{kids}</Box>
+                </Box>,
+              )
+            }
+          } else {
+            fileRow(rel, en.name, depth, en)
+          }
+        }
+        for (const rel of keys) {
+          if (changes[rel]?.kind === 'deleted' && parentOf(rel) === dir) {
+            fileRow(rel, baseName(rel), depth)
+          }
+        }
+      }
+      if (changedOnly) {
+        for (const rel of keys) fileRow(rel, rel, 0)
+        if (keys.length === 0) push(<Text key="none" dimColor>No changes yet. They show up here as they happen.</Text>)
+      } else {
+        walk('', 0)
+      }
+
+      const isNarrow = (e.props.bodyColumns ?? 80) < 48
+      const link = (key: string, label: string, onPress: () => void) => (
+        <Button key={key} plain onPress={onPress}><Text dimColor size="footnote">{label}</Text></Button>
+      )
 
       return (
         <Box flexDirection="column" gap={1}>
-          <Text bold>Which folder should I watch?</Text>
-          <Text dimColor>Nothing is scanned until you pick one.</Text>
-          {notice && <Text color="error">{notice}</Text>}
-          {Input && (
-            <Input
-              key="path"
-              label="Folder path"
-              placeholder="Full path, or a folder name inside this chat's folder"
-              submitLabel="Watch"
-              onSubmit={value => {
-                void pickRoot($, value)
-              }}
-            />
-          )}
-          {isWindows && (
-            <Box flexDirection="column">
-              <Button
-                key="explorer"
-                variant="primary"
-                onPress={() => { void pickWithExplorer($, browse) }}
-              >
-                {isPicking ? 'Picker is open...' : 'Browse with File Explorer...'}
-              </Button>
-              {isPicking && (
-                <Text dimColor>If you can't see it, it may be behind this window (check the taskbar).</Text>
-              )}
+          <Box flexDirection="column">
+            <Box flexDirection="row" alignItems="center">
+              <Box flexGrow={1}><Text weight="semibold">{baseName(root)}</Text></Box>
+              <Text size="footnote" mono>
+                <Text color={TONE.added.color}>+{tally.added} </Text>
+                <Text color={TONE.modified.color}>~{tally.modified} </Text>
+                <Text color={TONE.deleted.color}>-{tally.deleted}</Text>
+              </Text>
             </Box>
-          )}
-          {recent.length > 0 && (
+            <Text dimColor size="caption" wrap="truncate-start">{root}</Text>
+          </Box>
+          {/* Wraps onto more lines as the pane narrows; very narrow, the labels shorten too. */}
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+            {link('pick', isNarrow ? 'Folder' : 'Change folder', () => { void leaveRoot($) })}
+            {link('only', changedOnly ? (isNarrow ? 'All' : 'All files') : (isNarrow ? 'Changed' : 'Changes only'), () => { void update($, changedOnlyA, v => !v) })}
+            {link('collapse', 'Collapse', () => {
+              void update($, expandedA, () => [])
+              void update($, collapsedA, () => [...perDir.keys()])
+            })}
+            {link('pause', isPaused ? 'Resume' : 'Pause', () => {
+              void update($, isPausedA, v => !v).then(() => scan($))
+            })}
+            {link('view', isMenuOpen ? 'View ▴' : 'View ▾', () => { void update($, isMenuOpenA, v => !v) })}
+            {keys.length > 0 && link('clear', 'Clear', () => { void update($, changesA, () => ({})) })}
+          </Box>
+          {notice && <Text color={TONE.deleted.color} size="footnote">{notice}</Text>}
+          {isMenuOpen && (
             <Box flexDirection="column">
-              <Text bold>Recent</Text>
-              {recent.map(r => (
-                <Button key={`recent:${r}`} plain onPress={() => { void pickRoot($, r) }}>
-                  {baseName(r)} <Text dimColor>{r}</Text>
+              {VIEW_LABEL.map(([key, label]) => (
+                <Button
+                  key={`view:${key}`}
+                  plain
+                  onPress={() => {
+                    void update($, viewA, v => {
+                      const next = { ...v, [key]: !v[key] }
+                      void $.store.set(VIEW_KEY, next)
+                      return next
+                    })
+                  }}
+                >
+                  <Text color={view[key] ? TONE.modified.color : undefined} dimColor={!view[key]}>
+                    {view[key] ? '● ' : '○ '}
+                  </Text>
+                  <Text dimColor={!view[key]} size="footnote">{label}</Text>
                 </Button>
               ))}
             </Box>
           )}
-          <Box flexDirection="column">
-            <Text bold>Browse</Text>
-            <Text dimColor>{browse}</Text>
-            <Box flexDirection="row" gap={1}>
-              <Button key="use" onPress={() => { void pickRoot($, browse) }}>
-                Watch this folder
-              </Button>
-              {up !== browse && (
-                <Button key="up" onPress={() => { void update($, browseA, () => up) }}>
-                  Up one level
-                </Button>
-              )}
-            </Box>
-            {subdirs.slice(0, 300).map(en => (
-              <Button
-                key={`browse:${en.name}`}
-                plain
-                onPress={() => { void update($, browseA, () => join(browse, en.name)) }}
-              >
-                {'▸ '}{en.name}
-              </Button>
-            ))}
-            {subdirs.length === 0 && <Text dimColor>No folders in here.</Text>}
-          </Box>
+          {historyNote && <Text dimColor size="caption">{historyNote}</Text>}
+          {isPaused && (
+            <Text size="caption" color={TONE.modified.color}>Paused: the tree is frozen. Resume catches up on everything.</Text>
+          )}
+          {view.legend && (
+            <Text size="caption">
+              <Text color={TONE.added.color}>A</Text><Text dimColor> new   </Text>
+              <Text color={TONE.modified.color}>M</Text><Text dimColor> changed   </Text>
+              <Text color={TONE.deleted.color}>D</Text><Text dimColor> deleted   </Text>
+              <Text color={TONE.modified.color}>●</Text><Text dimColor> changes inside, blinks while live</Text>
+            </Text>
+          )}
+          {isCut && <Text dimColor size="caption">Big folder: only the first {MAX_ENTRIES} entries are watched.</Text>}
+          <Box flexDirection="column">{rows}</Box>
+          {hidden > 0 && <Text dimColor size="caption">{hidden} more rows. Collapse some folders.</Text>}
         </Box>
       )
     }
-
-    await read($, versionA) // redraw on every scan that found something
-    const changes = await read($, changesA)
-    const selected = await read($, selectedA)
-
-    // Preview of one file.
-    if (selected) {
-      const change = changes[selected]
-      const showFull = await read($, showFullA)
-      const abs = join(root, selected)
-      const st = await $.fs.stat(abs).catch(() => undefined)
-      let current: string | undefined
-      let problem = ''
-      if (!st) problem = 'This file no longer exists.'
-      else if (st.size > MAX_PREVIEW_BYTES) problem = `Too big to preview (${Math.round(st.size / 1024)} KB).`
-      else {
-        current = await $.fs.read(abs).catch(() => undefined)
-        if (current === undefined) problem = 'Could not read this file.'
-        else if (current.includes('\u0000')) { problem = 'Binary file, no preview.'; current = undefined }
-      }
-      const original = before.get(selected)
-      const diff = before.has(selected) && current !== undefined && !showFull
-        ? unifiedDiff(original ?? '', current)
-        : ''
-      const lines = current?.split(/\r?\n/) ?? []
-
+    const { Box, Text } = $.ui.resolve(e)
+    try {
+      let timer: { cancel: () => void } | undefined
+      const slow = new Promise<'slow'>(resolve => { timer = $.clock.after(DRAW_MS, () => resolve('slow')) })
+      const drawn = await Promise.race([draw(), slow])
+      timer?.cancel()
+      if (drawn === 'slow') return <Text dimColor>Still loading the folder...</Text>
+      return drawn
+    } catch (err) {
       return (
-        <Box flexDirection="column" gap={1}>
-          <Box flexDirection="row" gap={1}>
-            <Button key="back" onPress={() => { void update($, selectedA, () => '') }}>
-              Back
-            </Button>
-            {before.has(selected) && current !== undefined && (
-              <Button key="mode" onPress={() => { void update($, showFullA, v => !v) }}>
-                {showFull ? 'Show changes' : 'Show whole file'}
-              </Button>
-            )}
-          </Box>
-          <Text bold>
-            {selected}
-            {change && <Text color={TONE[change.kind].color}> {change.kind}</Text>}
-          </Text>
-          {problem && <Text dimColor>{problem}</Text>}
-          {diff && <Text dimColor>What Claude changed in this chat:</Text>}
-          {diff && <Code source={diff} format="diff" path={selected} />}
-          {!diff && current !== undefined && (
-            <Code
-              source={lines.slice(0, MAX_PREVIEW_LINES).join('\n')}
-              path={selected}
-              startLine={1}
-            />
-          )}
-          {!diff && lines.length > MAX_PREVIEW_LINES && (
-            <Text dimColor>Showing the first {MAX_PREVIEW_LINES} of {lines.length} lines.</Text>
-          )}
-        </Box>
-      )
-    }
-
-    const changedOnly = await read($, changedOnlyA)
-    const expanded = new Set(await read($, expandedA))
-    const blink = await read($, blinkA)
-    const view = await read($, viewA)
-    const isMenuOpen = await read($, isMenuOpenA)
-    const collapsed = new Set(await read($, collapsedA))
-    const isPaused = await read($, isPausedA)
-    const historyNote = await read($, historyNoteA)
-    const now = Date.now()
-    const keys = Object.keys(changes).sort()
-    const tally = { added: 0, modified: 0, deleted: 0 }
-    const perDir = new Map<string, { n: number; at: number }>()
-    for (const rel of keys) {
-      const change = changes[rel]!
-      tally[change.kind]++
-      for (let d = parentOf(rel); ; d = parentOf(d)) {
-        const was = perDir.get(d)
-        perDir.set(d, { n: (was?.n ?? 0) + 1, at: Math.max(was?.at ?? 0, change.at) })
-        if (d === '') break
-      }
-    }
-    const isFresh = (at: number) => now - at < PULSE_MS
-    const isOpenDir = (rel: string) =>
-      expanded.has(rel) || (view.autoOpen && perDir.has(rel) && !collapsed.has(rel))
-    const toggle = (rel: string) => {
-      if (isOpenDir(rel)) {
-        void update($, expandedA, list => list.filter(x => x !== rel))
-        void update($, collapsedA, list => (list.includes(rel) ? list : [...list, rel]))
-      } else {
-        void update($, collapsedA, list => list.filter(x => x !== rel))
-        void update($, expandedA, list => [...list, rel])
-      }
-    }
-    // Folders first; with "Recent changes first", the most recently touched lead
-    // within each kind, else names in order.
-    const lastTouched = (dir: string, en: FsEntry) => {
-      const rel = dir ? `${dir}/${en.name}` : en.name
-      return en.kind === 'dir'
-        ? perDir.get(rel)?.at ?? 0
-        : Math.max(en.mtimeMs, changes[rel]?.at ?? 0)
-    }
-    const sorted = (dir: string, entries: FsEntry[]) => {
-      const list = entries.filter(en => view.dotfiles || !en.name.startsWith('.'))
-      if (!view.recentFirst) return list.sort(byName)
-      return list.sort((a, b) =>
-        (a.kind === 'dir' ? 0 : 1) - (b.kind === 'dir' ? 0 : 1) ||
-        lastTouched(dir, b) - lastTouched(dir, a) || byName(a, b))
-    }
-
-    const rows: RenderElement[] = []
-    let target = rows // where push puts a row: the top list, or an open folder's
-    let drawn = 0
-    let hidden = 0
-    const push = (one: RenderElement) => {
-      if (drawn < MAX_ROWS) { target.push(one); drawn++ }
-      else hidden++
-    }
-    const isDesktop = e.surface === 'desktop'
-    // A row: chevron, type tag, the name, then the change mark; nesting indents it.
-    const row = (opts: {
-      key: string; depth: number; kind: 'dir' | 'file'; name: string; label: string
-      isOpen?: boolean; isMuted?: boolean; color?: string; isStruck?: boolean
-      letter?: string; dot?: { color: string; isPulsing: boolean }; count?: number
-      onPress?: () => void; tip?: string; meta?: string
-    }) => {
-      const name = (
-        <Text color={opts.color} dimColor={opts.isMuted} strikethrough={opts.isStruck} wrap="truncate-end">
-          {opts.label}
-        </Text>
-      )
-      push(
-        <Box key={`row:${opts.key}`} flexDirection="row" alignItems="center">
-          <Box flexShrink={0} flexDirection="row">
-            <Text mono color={CHEVRON}>{opts.kind === 'dir' ? (opts.isOpen ? '▾ ' : '▸ ') : '  '}</Text>
-            <Text mono size="caption" color={toneOf(opts.name)} dimColor={opts.isMuted}>
-              {opts.kind === 'file' && view.tags ? extTag(opts.name) : ''}
-            </Text>
-          </Box>
-          <Box flexGrow={1} flexShrink={1} minWidth={0}>
-            {opts.onPress
-              ? <Button key={opts.key} plain onPress={opts.onPress}>{name}</Button>
-              : name}
-          </Box>
-          {opts.meta && (
-            <Box flexShrink={0}><Text dimColor size="caption" mono>{opts.meta}  </Text></Box>
-          )}
-          {opts.tip && (
-            // The keyed Box is the hover scope; the card inside it shows while
-            // the pointer is on the mark (the docs' own reveal pattern).
-            <Box key={`mark:${opts.key}`} flexShrink={0} flexDirection="row">
-              {opts.count !== undefined && <Text dimColor size="caption">{opts.count} </Text>}
-              {opts.letter && <Text color={opts.color} size="caption" mono>{opts.letter}</Text>}
-              {opts.dot && (
-                <Text color={opts.dot.color} dimColor={opts.dot.isPulsing && blink}> ●</Text>
-              )}
-              <Box
-                position="absolute"
-                top={-1}
-                right={2}
-                width={opts.tip.length + 2}
-                display="none"
-                hover={{ display: 'flex' }}
-                backgroundColor="inverseText"
-                paddingX={1}
-              >
-                <Text size="caption" wrap="truncate-end">{opts.tip}</Text>
-              </Box>
-            </Box>
-          )}
-        </Box>,
-      )
-    }
-    const fileRow = (rel: string, label: string, depth: number, entry?: FsEntry) => {
-      const change = changes[rel]
-      const tone = change ? TONE[change.kind] : undefined
-      row({
-        meta: entry && (view.size || view.age)
-          ? [view.size ? sizeOf(entry.size).padStart(7) : '', view.age ? ageOf(entry.mtimeMs, now).padStart(6) : '']
-            .filter(Boolean).join('  ')
-          : undefined,
-        key: `file:${rel}`, depth, kind: 'file', name: baseName(rel), label,
-        color: tone?.color, isStruck: change?.kind === 'deleted', letter: tone?.letter,
-        dot: change && tone && isFresh(change.at) ? { color: tone.color, isPulsing: true } : undefined,
-        tip: change
-          ? `${TIP[change.kind]}${isFresh(change.at) ? ', just now' : ''}`
-          : undefined,
-        onPress: change?.kind === 'deleted' ? undefined : () => { void openInViewer($, root, rel) },
-      })
-    }
-    const walk = (dir: string, depth: number) => {
-      const entries = listings.get(dir)
-      if (!entries) {
-        push(
-          <Text key={`n:${dir}`} dimColor size="caption">
-            {dir === '' ? 'Reading the folder...' : 'Not scanned: too many files'}
-          </Text>,
-        )
-        return
-      }
-      for (const en of sorted(dir, [...entries])) {
-        const rel = dir ? `${dir}/${en.name}` : en.name
-        if (en.kind === 'dir') {
-          if (IGNORE.has(en.name)) {
-            if (!view.ignored) continue
-            row({ key: `skip:${rel}`, depth, kind: 'dir', name: en.name, label: en.name, isMuted: true })
-            continue
-          }
-          const isOpen = isOpenDir(rel)
-          const inside = perDir.get(rel)
-          row({
-            key: `dir:${rel}`, depth, kind: 'dir', name: en.name, label: en.name, isOpen,
-            meta: view.size && listings.has(rel)
-              ? `${listings.get(rel)!.length} items`.padStart(view.age ? 15 : 7)
-              : undefined,
-            color: inside ? TONE.modified.color : undefined, // JetBrains tints a changed folder's name
-            count: inside && !isOpen ? inside.n : undefined,
-            dot: inside ? { color: TONE.modified.color, isPulsing: isFresh(inside.at) } : undefined,
-            tip: inside
-              ? `${inside.n} changed file${inside.n === 1 ? '' : 's'} inside${isFresh(inside.at) ? ', work happening now' : ''}`
-              : undefined,
-            onPress: () => toggle(rel),
-          })
-          if (isOpen) {
-            // The folder's contents beside one guide line: a zero-width box's
-            // border, so the line runs unbroken down every row inside.
-            const kids: RenderElement[] = []
-            const outer = target
-            target = kids
-            walk(rel, depth + 1)
-            target = outer
-            target.push(
-              <Box key={`kids:${rel}`} flexDirection="row">
-                {isDesktop && view.guides
-                  ? (
-                    // A hairline bar (0.15 of a cell, about 1px) as tall as the folder: a border
-                    // on a zero-width box drew as a rounded pill instead.
-                    <Box width={0.15} flexShrink={0} marginLeft={1} marginRight={1} backgroundColor="#4e5157" />
-                  )
-                  : <Text mono>{'  '}</Text>}
-                <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>{kids}</Box>
-              </Box>,
-            )
-          }
-        } else {
-          fileRow(rel, en.name, depth, en)
-        }
-      }
-      for (const rel of keys) {
-        if (changes[rel]?.kind === 'deleted' && parentOf(rel) === dir) {
-          fileRow(rel, baseName(rel), depth)
-        }
-      }
-    }
-    if (changedOnly) {
-      for (const rel of keys) fileRow(rel, rel, 0)
-      if (keys.length === 0) push(<Text key="none" dimColor>No changes yet. They show up here as they happen.</Text>)
-    } else {
-      walk('', 0)
-    }
-
-    const isNarrow = (e.props.bodyColumns ?? 80) < 48
-    const link = (key: string, label: string, onPress: () => void) => (
-      <Button key={key} plain onPress={onPress}><Text dimColor size="footnote">{label}</Text></Button>
-    )
-
-    return (
-      <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
-          <Box flexDirection="row" alignItems="center">
-            <Box flexGrow={1}><Text weight="semibold">{baseName(root)}</Text></Box>
-            <Text size="footnote" mono>
-              <Text color={TONE.added.color}>+{tally.added} </Text>
-              <Text color={TONE.modified.color}>~{tally.modified} </Text>
-              <Text color={TONE.deleted.color}>-{tally.deleted}</Text>
-            </Text>
-          </Box>
-          <Text dimColor size="caption" wrap="truncate-start">{root}</Text>
+          <Text color={TONE.deleted.color}>Live files hit an error while drawing:</Text>
+          <Text dimColor size="caption">{String(err instanceof Error ? `${err.name}: ${err.message}` : err).slice(0, 400)}</Text>
         </Box>
-        {/* Wraps onto more lines as the pane narrows; very narrow, the labels shorten too. */}
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          {link('pick', isNarrow ? 'Folder' : 'Change folder', () => { void leaveRoot($) })}
-          {link('only', changedOnly ? (isNarrow ? 'All' : 'All files') : (isNarrow ? 'Changed' : 'Changes only'), () => { void update($, changedOnlyA, v => !v) })}
-          {link('collapse', 'Collapse', () => {
-            void update($, expandedA, () => [])
-            void update($, collapsedA, () => [...perDir.keys()])
-          })}
-          {link('pause', isPaused ? 'Resume' : 'Pause', () => {
-            void update($, isPausedA, v => !v).then(() => scan($))
-          })}
-          {link('view', isMenuOpen ? 'View ▴' : 'View ▾', () => { void update($, isMenuOpenA, v => !v) })}
-          {keys.length > 0 && link('clear', 'Clear', () => { void update($, changesA, () => ({})) })}
-        </Box>
-        {notice && <Text color={TONE.deleted.color} size="footnote">{notice}</Text>}
-        {isMenuOpen && (
-          <Box flexDirection="column">
-            {VIEW_LABEL.map(([key, label]) => (
-              <Button
-                key={`view:${key}`}
-                plain
-                onPress={() => {
-                  void update($, viewA, v => {
-                    const next = { ...v, [key]: !v[key] }
-                    void $.store.set(VIEW_KEY, next)
-                    return next
-                  })
-                }}
-              >
-                <Text color={view[key] ? TONE.modified.color : undefined} dimColor={!view[key]}>
-                  {view[key] ? '● ' : '○ '}
-                </Text>
-                <Text dimColor={!view[key]} size="footnote">{label}</Text>
-              </Button>
-            ))}
-          </Box>
-        )}
-        {historyNote && <Text dimColor size="caption">{historyNote}</Text>}
-        {isPaused && (
-          <Text size="caption" color={TONE.modified.color}>Paused: the tree is frozen. Resume catches up on everything.</Text>
-        )}
-        {view.legend && (
-          <Text size="caption">
-            <Text color={TONE.added.color}>A</Text><Text dimColor> new   </Text>
-            <Text color={TONE.modified.color}>M</Text><Text dimColor> changed   </Text>
-            <Text color={TONE.deleted.color}>D</Text><Text dimColor> deleted   </Text>
-            <Text color={TONE.modified.color}>●</Text><Text dimColor> changes inside, blinks while live</Text>
-          </Text>
-        )}
-        {isCut && <Text dimColor size="caption">Big folder: only the first {MAX_ENTRIES} entries are watched.</Text>}
-        <Box flexDirection="column">{rows}</Box>
-        {hidden > 0 && <Text dimColor size="caption">{hidden} more rows. Collapse some folders.</Text>}
-      </Box>
-    )
+      )
+    }
   })
 }

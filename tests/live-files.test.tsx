@@ -384,3 +384,17 @@ test('a slow history read never holds up the tree', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /\+1/ })).toBeDefined() // the mark arrives after
   await ui.unmount()
 })
+
+test('an error while drawing shows on the pane instead of a blank pane', async ($, on) => {
+  mock.clock(on)
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.list', () => ({ value: [] }))
+  on('store.get', () => { throw new Error('store is broken') })
+
+  await $.session.start({ cwd: 'C:/work', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /hit an error while drawing/ })).toBeDefined()
+  await ui.unmount()
+})
