@@ -116,6 +116,10 @@ async function scan($: EngineInterface): Promise<void> {
   trace('scan start')
   try { await scanInner($) } finally {
     trace(`scan end ${Date.now() - scanStart}ms, ${scannedDirs.size} dirs`)
+    if (traceOn) {
+      const panes = await $.ui.panes().catch(() => [])
+      trace(`panes ${panes.map(p => `${p.id}:placed=${p.isPlaced},shown=${p.isShown}`).join(' ') || 'none'}`)
+    }
     void flushTrace($)
   }
 }
@@ -1096,13 +1100,13 @@ export const register: Register = on => {
     }
     const { Box, Text } = $.ui.resolve(e)
     const drawStart = Date.now()
-    trace('draw start')
+    trace(`draw start req=${e.requestId} place=${e.props.placement} cols=${e.props.bodyColumns} surface=${e.surface}`)
     try {
       let timer: { cancel: () => void } | undefined
       const slow = new Promise<'slow'>(resolve => { timer = $.clock.after(DRAW_MS, () => resolve('slow')) })
       const drawn = await Promise.race([draw(), slow])
       timer?.cancel()
-      trace(`draw end ${Date.now() - drawStart}ms${drawn === 'slow' ? ' (slow)' : ''}`)
+      trace(`draw end ${Date.now() - drawStart}ms${drawn === 'slow' ? ' (slow)' : ''}, ${JSON.stringify(drawn).length} chars`)
       void flushTrace($)
       if (drawn === 'slow') return <Text dimColor>Still loading the folder...</Text>
       return drawn
