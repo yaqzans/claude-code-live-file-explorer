@@ -112,6 +112,15 @@ const byName = (a: FsEntry, b: FsEntry) =>
 
 async function scan($: EngineInterface): Promise<void> {
   if (isScanning || await read($, isPausedA)) return
+  const scanStart = Date.now()
+  trace('scan start')
+  try { await scanInner($) } finally {
+    trace(`scan end ${Date.now() - scanStart}ms, ${scannedDirs.size} dirs`)
+    void flushTrace($)
+  }
+}
+
+async function scanInner($: EngineInterface): Promise<void> {
   const root = await read($, rootA)
   if (!root) return
   isScanning = true
@@ -290,18 +299,45 @@ async function historyWrites($: EngineInterface): Promise<Record<string, Change>
 // Marks what this chat wrote before the folder was watched. Never holds up the
 // tree, and gives up after HISTORY_MS so a slow or stuck read cannot hang the pane.
 const HISTORY_MS = 30_000
+// Opt-in trace for debugging: when %TEMP%/live-files-trace.on exists, the last
+// 300 things the pane did are written to %TEMP%/live-files-trace-<chat>.log.
+const traceLines: string[] = []
+let traceFile = ''
+let traceOn: boolean | undefined
+let traceFlushedAt = 0
+function trace(line: string) {
+  const t = new Date()
+  traceLines.push(`${t.toLocaleTimeString('en-US')} ${line}`)
+  if (traceLines.length > 300) traceLines.splice(0, traceLines.length - 300)
+}
+async function flushTrace($: EngineInterface) {
+  if (Date.now() - traceFlushedAt < 1500) return
+  traceFlushedAt = Date.now()
+  try {
+    if (traceOn === undefined) {
+      const tmp = norm((await $.env.get('TEMP')) ?? (await $.env.get('TMPDIR')) ?? '/tmp')
+      traceOn = await $.fs.exists(`${tmp}/live-files-trace.on`)
+      traceFile = `${tmp}/live-files-trace-${(await $.session.id()).slice(0, 8)}.log`
+    }
+    if (!traceOn) return
+    await $.fs.write(traceFile, traceLines.join('\n') + '\n')
+  } catch {
+    // tracing must never break the pane
+  }
+}
 const DRAW_MS = 3000
 async function seedFromHistory($: EngineInterface, root: string, files: Map<string, number>) {
   await update($, historyNoteA, () => "Reading this chat's history...")
-  let timer: { cancel: () => void } | undefined
-  const late = new Promise<undefined>(resolve => { timer = $.clock.after(HISTORY_MS, () => resolve(undefined)) })
-  const found = await Promise.race([historyWrites($).catch(() => ({} as Record<string, Change>)), late])
-  timer?.cancel()
+  const startedAt = Date.now()
+  const slow = $.clock.after(HISTORY_MS, () => {
+    void update($, historyNoteA, note =>
+      note.startsWith('Reading') ? "Still reading this chat's history (a long chat); new changes are marked meanwhile." : note)
+  })
+  trace(`history start`)
+  const found = await historyWrites($).catch(() => ({} as Record<string, Change>))
+  slow.cancel()
+  trace(`history end ${Date.now() - startedAt}ms, ${Object.keys(found).length} files`)
   if (root !== (await read($, rootA))) return // the folder changed meanwhile
-  if (!found) {
-    await update($, historyNoteA, () => "Reading this chat's history took too long; new changes are still marked.")
-    return
-  }
   const touched = { ...found, ...(await read($, touchedA)) }
   const seeded: Record<string, Change> = {}
   for (const [rel, mtime] of files) {
@@ -623,7 +659,9 @@ export const register: Register = on => {
         // Losing this only costs a mark or a diff, never the tool call.
       }
     }
+    trace(`tool ${tool} start`)
     const result = await next(e)
+    trace(`tool ${tool} end`)
     if (key) {
       await update($, touchedA, prev => ({
         ...prev,
@@ -1057,14 +1095,20 @@ export const register: Register = on => {
       )
     }
     const { Box, Text } = $.ui.resolve(e)
+    const drawStart = Date.now()
+    trace('draw start')
     try {
       let timer: { cancel: () => void } | undefined
       const slow = new Promise<'slow'>(resolve => { timer = $.clock.after(DRAW_MS, () => resolve('slow')) })
       const drawn = await Promise.race([draw(), slow])
       timer?.cancel()
+      trace(`draw end ${Date.now() - drawStart}ms${drawn === 'slow' ? ' (slow)' : ''}`)
+      void flushTrace($)
       if (drawn === 'slow') return <Text dimColor>Still loading the folder...</Text>
       return drawn
     } catch (err) {
+      trace(`draw error ${String(err).slice(0, 200)}`)
+      void flushTrace($)
       return (
         <Box flexDirection="column">
           <Text color={TONE.deleted.color}>Live files hit an error while drawing:</Text>

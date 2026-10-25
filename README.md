@@ -50,6 +50,10 @@ Closed the pane? Click **Open Live files** above the prompt, or type `/files`. `
 - The File Explorer picker is Windows only. Finding earlier writes in long chats uses PowerShell on Windows and `grep` elsewhere.
 - Private by design: it only reads your files and the current chat's own transcript on your machine. Nothing is sent anywhere.
 
+## Troubleshooting
+
+If the pane goes blank or stops updating, create an empty file named `live-files-trace.on` in your temp folder (`%TEMP%` on Windows), reproduce the problem, and the pane writes what it was doing to `live-files-trace-<chat>.log` in the same folder. Attach that log to an issue.
+
 ## Uninstall
 
 ```bash
